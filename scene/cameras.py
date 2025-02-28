@@ -13,9 +13,38 @@ import torch
 from torch import nn
 import numpy as np
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix
+import math
+
+def getProjectionMatrixShift(znear, zfar, focal_x, focal_y, cx, cy, width, height, fovX, fovY):
+    tanHalfFovY = math.tan((fovY / 2))
+    tanHalfFovX = math.tan((fovX / 2))
+    # the origin at center of image plane
+    top = tanHalfFovY * znear
+    bottom = -top
+    right = tanHalfFovX * znear
+    left = -right
+    # shift the frame window due to the non-zero principle point offsets
+    offset_x = cx - (width/2)
+    offset_x = (offset_x/focal_x)*znear
+    offset_y = cy - (height/2)
+    offset_y = (offset_y/focal_y)*znear
+    top = top + offset_y
+    left = left + offset_x
+    right = right + offset_x
+    bottom = bottom + offset_y
+    P = torch.zeros(4, 4)
+    z_sign = 1.0
+    P[0, 0] = 2.0 * znear / (right - left)
+    P[1, 1] = 2.0 * znear / (top - bottom)
+    P[0, 2] = (right + left) / (right - left)
+    P[1, 2] = (top + bottom) / (top - bottom)
+    P[3, 2] = z_sign
+    P[2, 2] = z_sign * zfar / (zfar - znear)
+    P[2, 3] = -(zfar * znear) / (zfar - znear)
+    return P
 
 class Camera(nn.Module):
-    def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask,
+    def __init__(self, colmap_id, R, T, FoVx, FoVy, fx, fy, cx, cy, image, gt_alpha_mask,
                  image_name, uid,
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda", gt_depth=None
                  ):
@@ -53,7 +82,9 @@ class Camera(nn.Module):
         self.scale = scale
 
         self.world_view_transform = torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1).cuda()
-        self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy).transpose(0,1).cuda()
+        # self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy).transpose(0,1).cuda()
+        self.projection_matrix = getProjectionMatrixShift(self.znear, self.zfar, fx, fy, cx, cy, self.image_width, 
+                                                          self.image_height, self.FoVx, self.FoVy).transpose(0, 1).cuda()
         self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
         self.camera_center = self.world_view_transform.inverse()[3, :3]
 

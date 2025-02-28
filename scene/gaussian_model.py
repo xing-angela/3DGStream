@@ -681,8 +681,11 @@ class GaussianModel:
         self.denom[update_filter] += 1
     
     def query_ntc(self):
-        mask, self._d_xyz, self._d_rot = self.ntc(self._xyz)
-        
+        d_xyz = torch.full((self._xyz.shape[0], 3), 0.0, dtype=torch.half, device="cuda")
+        d_rot = torch.full((self._xyz.shape[0], 4), 0.0, dtype=torch.half, device="cuda")
+        d_rot[:, 0] = 1.0
+        mask, self._d_xyz, self._d_rot = self.ntc(self._xyz, d_xyz, d_rot)
+
         self._new_xyz = self._d_xyz + self._xyz
         self._new_rot = self.rotation_compose(self._rotation, self._d_rot)
         if self._rotate_sh == True:
@@ -699,8 +702,7 @@ class GaussianModel:
             repeated_quat = self.rotation_activation(self._d_rot[mask]).repeat(3, 1)
             rotated_reshaped_feature = rotate_sh_by_quaternion(sh=reshaped_feature[...,1:],l=1,q=repeated_quat) # [3N, SHs(l=1)]
             rotated_permuted_feature = rotated_reshaped_feature.reshape(-1,3,3) # [N, RGB, SHs(l=1)]
-            self._new_feature[mask][:,1:4]=rotated_permuted_feature.permute(0,2,1)  
-
+            self._new_feature[mask][:,1:4]=rotated_permuted_feature.permute(0,2,1)
 
 
     def update_by_ntc(self):
@@ -734,8 +736,10 @@ class GaussianModel:
         with torch.no_grad():
             if self._xyz_bound_min is None:
                 half_percentile = (100 - percentile) / 200
-                self._xyz_bound_min = torch.quantile(self._xyz,half_percentile,dim=0)
-                self._xyz_bound_max = torch.quantile(self._xyz,1 - half_percentile,dim=0)
+                # self._xyz_bound_min = torch.quantile(self._xyz,half_percentile,dim=0)
+                # self._xyz_bound_max = torch.quantile(self._xyz,1 - half_percentile,dim=0)
+                self._xyz_bound_min = torch.tensor([0.4085, 0.3183, 0.1371], device="cuda")
+                self._xyz_bound_max = torch.tensor([0.5875, 0.6195, 0.5840], device="cuda")
             return self._xyz_bound_min, self._xyz_bound_max
 
     def training_one_frame_setup(self,training_args):
@@ -755,7 +759,10 @@ class GaussianModel:
         else:
             ntc_lr=ntc_conf["optimizer"]["learning_rate"]
         self.ntc_optimizer = torch.optim.Adam(self.ntc.parameters(),
-                                                lr=ntc_lr)            
+                                                lr=ntc_lr)
+        # use a learning rate scheduler to model large motion first
+        self.ntc_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.ntc_optimizer, T_max=training_args.iterations, eta_min=1e-5)
+        
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.color_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")

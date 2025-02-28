@@ -21,8 +21,8 @@ class Scene:
 
     gaussians : GaussianModel
 
-    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
-        """b
+    def __init__(self, args : ModelParams, gaussians : GaussianModel, frame_idx: int, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
+        """
         :param path: Path to colmap scene main folder.
         """
         self.model_path = args.model_path
@@ -43,7 +43,13 @@ class Scene:
         self.train_cameras = {}
         self.test_cameras = {}
 
-        if os.path.exists(os.path.join(args.source_path, "sparse")):
+        if os.path.exists(os.path.join(args.source_path, "optim_params.txt")):
+            print("Found optim_params.txt file, assuming BRICS data set!")
+            scene_info = scene_info = sceneLoadTypeCallbacks["brics"](args.source_path, args.test_cam_name, frame_idx, args.brics_type, args.mesh_path)
+        elif os.path.exists(os.path.join(args.source_path, "cam_params.json")):
+            print("Found cam_params.json, assuming BRICS Processed data set!")
+            scene_info = sceneLoadTypeCallbacks["brics-processed"](args.source_path, args.test_cam_name, frame_idx, args.brics_type, args.mesh_path)
+        elif os.path.exists(os.path.join(args.source_path, "sparse")):
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval, ply_name=args.ply_name)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms_train.json file, assuming Blender data set!")
@@ -52,6 +58,7 @@ class Scene:
             assert False, "Could not recognize scene type!"
 
         if not self.loaded_iter:
+            print("not loading from iteration")
             with open(scene_info.ply_path, 'rb') as src_file, open(os.path.join(self.output_path, "input.ply") , 'wb') as dest_file:
                 dest_file.write(src_file.read())
             json_cams = []
@@ -80,6 +87,8 @@ class Scene:
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
 
         if self.loaded_iter:
+            print("loading from iteration")
+            print("model path: ", self.model_path)
             self.gaussians.load_ply(os.path.join(self.model_path,
                                                            "point_cloud",
                                                            "iteration_" + str(self.loaded_iter),

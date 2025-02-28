@@ -58,6 +58,12 @@ class ModelParams(ParamGroup):
         self._white_background = False
         self.data_device = "cuda"
         self.eval = False
+        self.start_frame = 0
+        self.end_frame = -1
+        self.brics_type = "sbc" 
+        self.interval = 1
+        self.mesh_path = "./mesh/ply"
+        self.test_cam_name = "brics-sbc-017_cam0"
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):

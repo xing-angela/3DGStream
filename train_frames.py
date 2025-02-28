@@ -25,20 +25,24 @@ from utils.debug_utils import save_tensor_img
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 import re
+import faulthandler
+faulthandler.enable()
+import shutil
+
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
 except ImportError:
     TENSORBOARD_FOUND = False
 
-def training_one_frame(dataset, opt, pipe, load_iteration, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
+def training_one_frame(dataset, opt, pipe, load_iteration, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, frame_idx):
     start_time=time.time()
     last_s1_res = []
     last_s2_res = []
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree,opt.rotate_sh)
-    scene = Scene(dataset, gaussians, load_iteration=load_iteration, shuffle=False)
+    scene = Scene(dataset, gaussians, frame_idx, load_iteration=load_iteration, shuffle=False)
     gaussians.training_one_frame_setup(opt)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -77,6 +81,7 @@ def training_one_frame(dataset, opt, pipe, load_iteration, testing_iterations, s
             if not viewpoint_stack:
                 viewpoint_stack = scene.getTrainCameras().copy()
             viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+
             
             # Render
             if (iteration - 1) == debug_from:
@@ -90,7 +95,6 @@ def training_one_frame(dataset, opt, pipe, load_iteration, testing_iterations, s
             Lds = torch.tensor(0.).cuda()
             loss += (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
             
-        loss/=opt.batch_size
         loss.backward()
         iter_end.record()
 
@@ -121,6 +125,7 @@ def training_one_frame(dataset, opt, pipe, load_iteration, testing_iterations, s
             if iteration < opt.iterations:
                 gaussians.ntc_optimizer.step()
                 gaussians.ntc_optimizer.zero_grad(set_to_none = True)
+                gaussians.ntc_scheduler.step()
 
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
@@ -281,14 +286,14 @@ def training_report(tb_writer, iteration, Ll1, Lds, loss, l1_loss, elapsed, test
                 # , 'last_gt':last_gt.cpu()
                 }
 
-def train_one_frame(lp,op,pp,args):
+def train_one_frame(lp,op,pp,args, frame_idx):
     args.save_iterations.append(args.iterations + args.iterations_s2)
     if args.depth_smooth==0:
         args.bwd_depth=False
     print("Optimizing " + args.output_path)
     res_dict={}
     if(args.opt_type=='3DGStream'):
-        s1_ress, s2_ress, pre_time, s1_time, s2_time = training_one_frame(lp.extract(args), op.extract(args), pp.extract(args), args.load_iteration, args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
+        s1_ress, s2_ress, pre_time, s1_time, s2_time = training_one_frame(lp.extract(args), op.extract(args), pp.extract(args), args.load_iteration, args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, frame_idx)
 
         # All done
         print("\nTraining complete.")
@@ -318,21 +323,31 @@ def train_frames(lp, op, pp, args):
     output_path=args.output_path
     model_path=args.model_path
     load_iteration = args.load_iteration
-    sub_paths = os.listdir(video_path)
-    pattern = re.compile(r'frame(\d+)')
-    frames = sorted(
-        (item for item in sub_paths if pattern.match(item)),
-        key=lambda x: int(pattern.match(x).group(1))
-    )
-    frames=frames[args.frame_start:args.frame_end]
+
+    if os.path.exists(output_path):
+        shutil.rmtree(output_path)
+
+    # sub_paths = os.listdir(video_path)
+    # pattern = re.compile(r'frame(\d+)')
+    # frames = sorted(
+    #     (item for item in sub_paths if pattern.match(item)),
+    #     key=lambda x: int(pattern.match(x).group(1))
+    # )
+    # frames=frames[args.frame_start:args.frame_end]
     if args.frame_start==1:
         args.load_iteration = args.first_load_iteration
+    frames = os.listdir(os.path.join(video_path, "images"))
+    
+    # idxs = range(args.start_frame, args.end_frame, args.interval)
+    frames = frames[args.start_frame:args.end_frame+1:args.interval]
+    print(frames)
+
     for frame in frames:
         start_time = time.time()
-        args.source_path = os.path.join(video_path, frame)
+        args.source_path = os.path.join(video_path)
         args.output_path = os.path.join(output_path, frame)
         args.model_path = model_path
-        train_one_frame(lp,op,pp,args)
+        train_one_frame(lp,op,pp,args, frame)
         print(f"Frame {frame} finished in {time.time()-start_time} seconds.")
         model_path = args.output_path
         args.load_iteration = load_iteration

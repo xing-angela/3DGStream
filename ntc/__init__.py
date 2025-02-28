@@ -1,4 +1,5 @@
 import torch
+
 class NeuralTransformationCache(torch.nn.Module):
     def __init__(self, model, xyz_bound_min, xyz_bound_max):
         super(NeuralTransformationCache, self).__init__()
@@ -14,7 +15,7 @@ class NeuralTransformationCache(torch.nn.Module):
             contracted_xyz=(xyz-self.xyz_bound_min)/(self.xyz_bound_max-self.xyz_bound_min)
             return contracted_xyz
         
-    def forward(self, xyz:torch.Tensor):
+    def forward(self, xyz:torch.Tensor, d_xyz, d_rot):
         contracted_xyz=self.get_contracted_xyz(xyz)                          # Shape: [N, 3]
         
         mask = (contracted_xyz >= 0) & (contracted_xyz <= 1)
@@ -26,7 +27,7 @@ class NeuralTransformationCache(torch.nn.Module):
         masked_d_xyz=resi[:,:3]
         masked_d_rot=resi[:,3:7]
         # masked_d_opacity=resi[:,7:None]
-        
+
         d_xyz = torch.full((xyz.shape[0], 3), 0.0, dtype=torch.half, device="cuda")
         d_rot = torch.full((xyz.shape[0], 4), 0.0, dtype=torch.half, device="cuda")
         d_rot[:, 0] = 1.0
@@ -34,7 +35,7 @@ class NeuralTransformationCache(torch.nn.Module):
 
         d_xyz[mask] = masked_d_xyz
         d_rot[mask] = masked_d_rot
-        
+
         return mask, d_xyz, d_rot
         
         
